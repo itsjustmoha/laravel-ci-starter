@@ -27,7 +27,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Run actionlint
         run: |
@@ -46,7 +46,7 @@ jobs:
 
     steps:
       - name: Checkout starter
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           path: starter
 
