@@ -10,8 +10,9 @@ parameters:
     # 0 is the loosest, 10 the strictest. 9 is strict without being noisy.
     level: 9
 
+    # config/ is left out on purpose: it is mostly env() calls, which are
+    # typed bool|string, so level 9 flags even Laravel's own config files.
     paths:
         - app/
-        - config/
         - database/
         - routes/

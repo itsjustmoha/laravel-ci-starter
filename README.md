@@ -44,7 +44,7 @@ php artisan test
 | --- | --- |
 | [`.github/workflows/ci.yml`](template/.github/workflows/ci.yml) | The CI workflow: three jobs, described below |
 | [`.github/dependabot.yml`](template/.github/dependabot.yml) | Weekly grouped updates for Actions, Composer and npm |
-| [`phpstan.neon`](template/phpstan.neon) | Larastan config: level 9 on `app/`, `config/`, `database/` and `routes/` |
+| [`phpstan.neon`](template/phpstan.neon) | Larastan config: level 9 on `app/`, `database/` and `routes/` |
 
 | Job | What it runs | Notes |
 | --- | --- | --- |
