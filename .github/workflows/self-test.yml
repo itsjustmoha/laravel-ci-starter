@@ -1,0 +1,98 @@
+# Checks that the template works on a brand-new Laravel app, on every push and
+# once a week, so breaking releases of Laravel, Larastan or Pint show up here
+# before they show up in someone's project.
+
+name: Self-test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '23 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  actionlint:
+    name: Lint workflows
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run actionlint
+        run: |
+          bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+          ./actionlint -color .github/workflows/*.yml template/.github/workflows/*.yml
+
+  fresh-laravel:
+    name: Fresh Laravel app (PHP ${{ matrix.php }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.3', '8.4', '8.5']
+
+    steps:
+      - name: Checkout starter
+        uses: actions/checkout@v6
+        with:
+          path: starter
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: mbstring, intl, pdo_sqlite
+          coverage: none
+
+      - name: Create a fresh Laravel app
+        run: composer create-project laravel/laravel app --no-interaction --no-progress --prefer-dist
+
+      - name: Apply the starter, as the README describes
+        working-directory: app
+        run: |
+          cp -R ../starter/template/. .
+          composer require --dev larastan/larastan --no-interaction --no-progress
+
+      - name: Show versions
+        working-directory: app
+        run: |
+          php --version | head -n 1
+          php artisan --version
+          composer show --direct | grep -E '^(laravel/framework|laravel/pint|larastan/larastan) '
+
+      - name: Pint
+        working-directory: app
+        run: bash ../starter/.github/scripts/run-template-step.sh quality Pint
+
+      - name: Larastan
+        if: ${{ !cancelled() }}
+        working-directory: app
+        run: bash ../starter/.github/scripts/run-template-step.sh quality Larastan
+
+      - name: Composer audit
+        if: ${{ !cancelled() }}
+        working-directory: app
+        run: bash ../starter/.github/scripts/run-template-step.sh security "Composer audit"
+
+      - name: Prepare environment
+        if: ${{ !cancelled() }}
+        working-directory: app
+        run: bash ../starter/.github/scripts/run-template-step.sh tests "Prepare environment"
+
+      - name: Run tests
+        if: ${{ !cancelled() }}
+        working-directory: app
+        run: bash ../starter/.github/scripts/run-template-step.sh tests "Run tests"

@@ -1,0 +1,160 @@
+# Laravel CI - https://github.com/itsjustmoha/laravel-ci-starter
+#
+#   quality   Pint (code style) and Larastan (static analysis)
+#   security  composer audit against known vulnerabilities
+#   tests     your test suite on each PHP version in the matrix
+#
+# Assumes Laravel's defaults: SQLite for tests, Vite + npm for assets.
+# MySQL / PostgreSQL, coverage and parallel tests: see the README.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  # PHP version for the quality and security jobs. Use the one you deploy on.
+  PHP_VERSION: '8.4'
+
+jobs:
+  quality:
+    name: Code quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ env.PHP_VERSION }}
+          coverage: none
+
+      - name: Get Composer cache directory
+        id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Composer packages
+        uses: actions/cache@v5
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: composer-${{ runner.os }}-${{ env.PHP_VERSION }}-${{ hashFiles('composer.lock') }}
+          restore-keys: composer-${{ runner.os }}-${{ env.PHP_VERSION }}-
+
+      - name: Install dependencies
+        id: install
+        run: composer install --no-interaction --no-progress --prefer-dist
+
+      - name: Pint
+        run: vendor/bin/pint --test
+
+      # Larastan still runs when Pint fails, so one push shows you both reports.
+      - name: Restore PHPStan result cache
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        uses: actions/cache/restore@v5
+        with:
+          path: /tmp/phpstan
+          key: phpstan-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: phpstan-${{ runner.os }}-
+
+      - name: Larastan
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: vendor/bin/phpstan analyse --no-progress --memory-limit=1G
+
+      - name: Save PHPStan result cache
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        uses: actions/cache/save@v5
+        with:
+          path: /tmp/phpstan
+          key: phpstan-${{ runner.os }}-${{ github.run_id }}
+
+  security:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ env.PHP_VERSION }}
+          coverage: none
+
+      # Reads composer.lock directly, no install needed.
+      - name: Composer audit
+        run: composer audit --locked --no-interaction
+
+  tests:
+    name: Tests (PHP ${{ matrix.php }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # Only list versions your composer.lock installs on. A lock file made
+        # on PHP 8.4 can contain packages that need 8.4, so 8.3 is left out.
+        php: ['8.4', '8.5']
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: mbstring, intl, pdo_sqlite
+          coverage: none
+
+      - name: Get Composer cache directory
+        id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Composer packages
+        uses: actions/cache@v5
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: composer-${{ runner.os }}-${{ matrix.php }}-${{ hashFiles('composer.lock') }}
+          restore-keys: composer-${{ runner.os }}-${{ matrix.php }}-
+
+      - name: Install dependencies
+        run: composer install --no-interaction --no-progress --prefer-dist
+
+      # Views that use @vite throw in tests when the manifest is missing.
+      - name: Set up Node
+        if: hashFiles('package-lock.json') != ''
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Build frontend assets
+        if: hashFiles('package-lock.json') != ''
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+
+      - name: Prepare environment
+        run: |
+          cp .env.example .env
+          php artisan key:generate
+          touch database/database.sqlite
+
+      - name: Run tests
+        run: php artisan test
